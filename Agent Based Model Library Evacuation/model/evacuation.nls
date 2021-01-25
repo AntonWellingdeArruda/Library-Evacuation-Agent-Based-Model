@@ -1,0 +1,316 @@
+; --------------------------------------------
+; Implements emmployees and visitor movements:
+;
+; 1) wandering
+;    random movements of persons at its own walking speed
+;    - maximum of 8 persons per square meter (patch)
+;      waits for a position to vacate before moving
+;    - if inside continuers walking inside the building
+;    - if outside continuers walking outside the building
+;
+; 2) evacuating
+;    employees and frequent visitors (who knows exit plan) will start evacuating
+;    - chooses the closest exit to take:
+;      main exit A by default. B and C when active in the model
+;    - moves at its own running speed
+;      --> or at the lowest running speed of his evacuating group (TBD)
+;    - maximum of 8 persons per square meter (patch)
+;      waits for a position to vacate before moving
+;      wouldn't be worth to test having more persons per square meter during evacuation!!!!!
+;    visitors who don't know the emergency exit
+;      - continues wandering and
+;      - looks for an employee in site (10m?) to follow
+;         - then it follows the employee at running speed
+;         -> tbd how to follow when it looses sight from the employee
+;    
+;
+
+to start-evacuation ; only called once at start of alarm
+  set Evacuating? true
+  ask employees [assign-exit]
+  ask visitors with [knows-all-exits?] [assign-exit]
+  ask visitors with [knows-exit-A?] [ifelse A-exit? [assign-exit-A] [kipzonderkop] ]
+end
+
+to wandering
+  ask employees [ if no-walk-zone = false [walk]]
+  ask visitors  [ if no-walk-zone = false [walk]]
+end
+
+to evacuating
+  ask employees with [Inside?] [scape]                         ; all employes scapes immediately 
+  ask visitors  with [Inside? and knows-all-exits? and         ; and visitors who knows the exist after
+                      time-to-react <= 0] [scape]              ; his/her reaction time
+  ask visitors  with [time-to-react > 0] [
+                      set time-to-react time-to-react - 1]     ; update visitors reaction time counter
+  
+  
+  ask visitors [  ; visitors escape when most agents near them escape
+    
+    let nr-agents-in-sight ((count visitors in-radius SightingDistance) + (count employees in-radius SightingDistance))
+    let nr-agents-escaping ((count visitors in-radius SightingDistance with [Inside? and escaping?]) + (count employees in-radius SightingDistance with [inside? and escaping?]))
+
+    if (nr-agents-escaping > (nr-agents-in-sight / 2)) [scape]
+    
+  ]
+  
+  ifelse A-exit? [  
+    ask visitors with [Inside? and knows-exit-A? and time-to-react <= 0] [scape]  
+    ] 
+  
+    [
+    ask visitors with [Inside? and knows-exit-A? and time-to-react <= 0] [look-for-guide]
+    ]
+  
+  ask visitors with [inside? and stupid?] [kipzonderkop]
+  
+  ask employees with [not Inside?] [walk]                      ; visitors and employees outside keep walking 
+  ask visitors with [not Inside?] [walk]                       ;
+  ;
+  
+  ask visitors with [not knows-all-exits?] [ walk ]
+  ;ask visitors with [not knows-all-exits?] [look-for-guide]          ; visitors requesting for guidance
+  ask visitors with [stupid?] [look-for-guide]  
+  
+  let nr-emp-list (20 + (nr-employees * (Model-Smoothness / 100)))
+  let nr-vis-list (20 + (nr-visitors * (Model-Smoothness / 100)))
+  
+  let nr-emp min (list nr-emp-list count  employees with [Inside?])                          ; list of employees/visitors who's exists are re-assigned after each tick
+  let nr-vis min (list nr-vis-list count visitors with [Inside? and knows-all-exits?])       ; 10 per ticket (just to improve processing time per tick)
+  if A-exit? [
+    let nr-visA min (list 500 count visitors with [Inside? and knows-exit-A?]) 
+    ask n-of nr-visA visitors with [Inside? and knows-exit-A?] [assign-exit-A]
+  ]                ; 
+ 
+  ask n-of nr-emp employees with [Inside?] [assign-exit]                                     ; after tick re-assign the closest exit
+  ask n-of nr-vis visitors with  [Inside? and knows-all-exits?] [assign-exit]                ; path to the escaping agents
+  
+  
+ 
+;  ; change running speed of visitors in a non-linear way when it gets more crowded
+;  ask visitors [
+;    let nr-agents count turtles with [inside? = true] in-cone (2 * running-speed) 180
+;    if inside? = true and busy-speed nr-agents >= 0 [
+;      set running-speed busy-speed nr-agents
+;      ]
+;  ]
+;   ; change running speed of employees in a non-linear way when it gets more crowded
+;   ask employees [
+;    let nr-agents count turtles with [inside? = true] in-cone (2 * running-speed) 180
+;    if inside? = true and busy-speed nr-agents >= 1 [
+;      set running-speed busy-speed nr-agents
+;      ]
+;  ]
+  ask visitors [
+    ifelse female? = true [set running-speed 1.4 / 1.5] [set running-speed 1]           ; reset running speed every tick
+    if child? = true [set running-speed 0.7]                                            ; reset running speed every tick
+    
+    let nr-agents count turtles with [inside? = true] in-cone (2 * running-speed) 180   ; change running speed of visitors in a non-linear way when it gets more crowded
+    if inside? = true and nr-agents >= 3[
+      set running-speed busy-speed nr-agents
+      ]
+  ]
+  
+  ask employees [
+    ifelse female? = true [set running-speed 1.4 / 1.5] [set running-speed 1]           ; reset running speed every tick
+    
+    let nr-agents count turtles with [inside? = true] in-cone (2 * running-speed) 180   ; change running speed of visitors in a non-linear way when it gets more crowded
+    if inside? = true and nr-agents >= 3[
+     set running-speed busy-speed nr-agents
+      ]
+  ]
+  
+  
+end
+
+to walk
+  if CanMoveAhead? walking-speed false [        ; move ahead (current heading) if possible
+    forward walking-speed ]                     ; with walking-speed
+  new-random-heading                            ; than set a new random heading
+end
+
+to kipzonderkop
+  if CanMoveAhead? running-speed false [     ; move ahead (current heading) if possible
+    forward running-speed ]                     ; with running-speed
+    new-random-heading     
+end
+
+to scape 
+  set escaping? true
+  let tryAgain? false
+ ; if who = 237 [say "scaping 237"]
+  ifelse CanMoveAhead? running-speed true [     ; move ahead (current heading) if possible
+ 
+      forward running-speed                       ; with running-speed
+    if nextToNode? [ set tryAgain? true]]       ; if you are still on the patch which contains the current node
+  [ set tryAgain? true]                         ; you only move ahead, while you are not on a patch which contains the 'current' node
+ 
+  if tryAgain? 
+  [ 
+    new-random-heading                          ; if current heading not possible
+    if CanMoveAhead? running-speed true [       ; than try out another random direction
+       forward running-speed ]                  ; this avoids loops/lockdown --> new exit path will be calculated
+  ] 
+end
+
+to-report nextToNode?            ; using during space to avoid loops
+  let inNodePatch? false
+  ask nodes-here [               ; move the agent to node location
+    set inNodePatch? true]
+  report inNodePatch?
+end
+
+
+to look-for-guide
+  let found? false
+  let guide self
+  if count employees in-radius SightingDistance > 0 [                             ; looks for employees within their sighting distance
+    ask min-one-of employees in-radius SightingDistance [distance myself] [       ; and get the path info from the closest one
+        set found? true
+        set guide self
+      ]
+  ]
+  ifelse found? [
+    set color green
+    set knows-all-exits? true
+    set stupid? false
+    set exiting-to [exiting-to] of guide
+  ]
+  [                                                                          ; if not found thy a visitor who knows the exit
+    if count visitors in-radius SightingDistance with [knows-all-exits?] > 0 [
+    ask min-one-of visitors in-radius SightingDistance with [knows-all-exits?] [distance myself] [
+        set found? true
+        set guide self
+      ]
+    if found? [
+      set color green
+      set knows-all-exits? true
+      set exiting-to [exiting-to] of guide
+      ]
+   ]
+  ]
+end
+
+to assign-exit
+  let go-to-exit ""
+  let go-to-node NOBODY
+  update-nodes-views                        ; find visible nodes from current position
+  
+  ifelse count nodes with [InView?] > 0 [   ; there is at lease one node in sight
+    ask min-one-of nodes [DistanceToExit] [
+        set go-to-exit bestExit
+        set go-to-node self]
+      set exiting-to go-to-exit
+      set bearing-node go-to-node
+      ;check-nfext-node                         ; check for next node as well 
+      face bearing-node 
+  ]
+  [ set exiting-to ""                       ; else -> exit node not in sight
+    set bearing-node NOBODY                 ;
+    new-random-heading ]                    ; agent can't see an exit sign.... try it next round
+end
+
+to assign-exit-A
+  let go-to-exit ""
+  let go-to-node NOBODY
+  update-nodes-view-A                       ; find visible nodes from current position
+  
+  ifelse count nodes with [InView?] > 0 [   ; there is at lease one node in sight
+    ask min-one-of nodes [DistanceToExit] [
+        set go-to-exit "A"
+        set go-to-node self]
+      set exiting-to go-to-exit
+      set bearing-node go-to-node
+     ; if who = 237 [say go-to-node]
+      face bearing-node 
+  ]
+  [ set exiting-to ""                       ; else -> exit node not in sight
+    set bearing-node NOBODY                 ;
+    new-random-heading ]                    ; agent can't see an exit sign.... try it next round
+  
+end
+
+to update-nodes-views
+ let agent self
+ ask nodes [
+   set InView? false                                         ; reset node views, alsof je er geen kan zien
+   set DistanceToExit infinite
+   if can-see-each-other? self agent
+     [ set InView? true                                      ; this node is in sight
+       let thisExitDist infinite
+       let agent-node-dist distance agent
+       if A-Exit? [
+          set thisExitDist agent-node-dist + distanceToExitA    ; set node distance to the best exit
+          set bestExit "A"
+         set DistanceToExit thisExitDist ]
+       if B-Exit? [                    ; staat b exit aan?
+          set thisExitDist agent-node-dist + distanceToExitB
+          if thisExitDist < DistanceToExit [
+            set bestExit "B"
+           set DistanceToExit thisExitDist ]
+       ]
+       if C-Exit? [
+         set thisExitDist agent-node-dist + distanceToExitC
+         if thisExitDist < DistanceToExit [
+            set bestExit "C"
+            set DistanceToExit thisExitDist ]
+       ]
+    ]
+   ]
+end
+
+to update-nodes-view-A
+  let agent self
+  ask nodes [
+    set InView? false                                         ; reset node views, alsof je er geen kan zien
+    set DistanceToExit infinite
+    if can-see-each-other? self agent
+      [ set InView? true                                      ; this node is in sight
+        let agent-node-dist distance agent
+        let thisExitDist agent-node-dist + distanceToExitA    ; set node distance to the best exit
+        set bestExit "A"
+        set DistanceToExit thisExitDist
+     ]
+    ]
+end
+
+to-report IsVisible? [object] ; true if both objects can see each other
+  report can-see-each-other? self object
+end
+
+to new-random-heading
+    let ph heading
+    let new-heading (random 180) - 90 ; random betwee -90 and 90 degrees
+    right new-heading
+end
+
+to-report CanMoveAhead? [dist checkStay?]                              ; true when the agent can move to the patch ahead
+  let canMove? false                                                   ; checkStay? indicates whether it can exit
+  let destPatch patch-ahead dist
+  if destPatch != NOBODY [
+    if checkStay? or ([Inside?] of patch-here = [Inside?] of destPatch) [ ; stay either inside or outside the building
+      let nr-agents count turtles-on destPatch
+      if nr-agents < 8  [ ; maximum nr of agents per patch
+        set canMove? true
+        while [canMove? and dist > 0] [ 
+          set destPatch patch-ahead dist
+          if not [Allowed?] of destPatch
+             [set canMove? false ]
+          set dist dist - 1                                           ; inspects patches every m... it may pass over patches corners
+        ]                                                             ; lower steps are more acurate but takes longer processing time
+      ]
+    ]
+  ]
+  report canMove?
+end
+
+
+to-report busy-speed [nr-of-agents]
+  
+  let local-speed 0
+  
+  set local-speed running-speed / (nr-of-agents / 3) ; change running speed of visitors and employees in a non-linear way when it gets more crowded
+  
+  report local-speed
+  
+end

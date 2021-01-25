@@ -1,0 +1,182 @@
+; ---------------------------------------------
+; Settings for mapping floorplan to the patches
+;
+; object settings based on the patch color (after resetting it to netlog color list):
+; - black:      walls
+; - white:      floor inside the building
+; - red:        main building exit (exit A)
+; - orange:     emergency exit B
+; - magenta:    emergency exit C
+; - cyan:       room exits (node path added in the middle)
+; - blue:       exit node/path. used to compute exit paths
+; - green:      restroom - treated as white
+; - brown/gray: outside the building
+
+
+patches-own [
+  Allowed?        ; true if it can be occupied by an agent. is false on walls
+  Inside?         ; patches inside the building
+  BuildingExit?   ; true for building exists (red)
+  RoomExit?       ; true for room exists (cyan)
+  ExitSign?       ; true for exit signs (blue)
+  exitId          ; unique id per exit (room/building/signs)
+  no-walk-zone    ; indicates a room where people sit, read etc.
+]
+
+to setup-floorplan
+  import-pcolors "coloured_planNEW.bmp"                   ; imports an in microsoft paint edited version of the map
+  reset-patches-colors                                 ; all patches are set with one of the netlogo pre-dedined color palette (see last function in this file)
+  ask patches [                                        ; default patch values:
+    set Allowed? true                                  ; - not a wall
+    set no-walk-zone false                             ;
+    set Inside? true                                   ; - inside the building
+    set BuildingExit? false                            ; - not an exit
+    set RoomExit? false                                ;
+    set ExitSign? false                                ;
+    set exitId 0]                                      ; 
+  ask patches with [pcolor = black]                    ; walls 
+      [set Allowed? false]                             ; 
+  ask patches with [pcolor = brown or pcolor = gray ]  ; patches outside the building
+      [set Inside? false]                              ;
+  ask patches with [pcolor = red or pcolor = orange    ; building exists
+                    or pcolor = magenta]               ;
+         [set buildingExit? true                       ;
+          set Inside? false]                           ;
+  ask patches with [pcolor = cyan]                     ; room exists
+      [set roomExit? true]                             ; 
+  ask patches with [pcolor = blue]                     ; exit signs (nodes)
+      [set exitSign? true]                             ;
+  ask patches with [ pcolor = 44.3 or pcolor = 35.6] ; 
+    [set no-walk-zone true ]                           ; set no walking zone
+  setup-exit-ids                                       ; set the exist ids
+  setup-nodes                                          ; set all nodes and possible links
+  set-routes-to-exits                                  ; build exit paths/routes via the exits/nodes (see routes module) 
+end
+
+
+to setup-exit-ids
+  let id 0                                             ; each exit (building/rooms) and exit signs are assigned with an id and 
+  let exit-name ""                                     ; have a node (turtle) placed it on its middle to be used for routing/path
+  ask patches with [buildingExit?] [                   ; 
+    set exit-name "A" ; main entry                     ; only nodes on the building exists have a name tag
+    if pcolor = orange [set exit-name "B"]             ;
+    if pcolor = magenta [set exit-name "C"]            ;
+    if exitId = 0 [                                    ; scan all building exit patches
+       set id id + 1                                
+       setup-exit id exit-name ]
+    ]
+  set exit-name ""
+  ask patches with [roomExit?] [                       ; scan all room exit patches
+    if exitId = 0 [
+       set id id + 1
+      setup-exit id exit-name ]
+     ]
+  ask patches with [exitSign?] [                       ; scan all exit-sign patches
+    if exitId = 0 [
+       set id id + 1 
+       setup-exit id exit-name ]
+  ]
+end
+
+to setup-exit [id name]
+  set exitId id  
+  setup-neighbors id                                    ; recursively set all exit neighbors with the same id
+  let sumPx 0                                           ; sum of all x-coordinates of a certain exit
+  let sumPy 0                                           ; sum of all y-coordinates of a certain exit
+  let nP 0                                              ; counts the number of patches, which is needed to calculate the center patch of the exit
+  ask patches with [exitId = id] [                      ; calculates the average pxcor and pycor
+     set sumPx sumPx + pxcor                            ; of all patches from this exit
+     set sumPy sumPy + pycor
+     set nP nP + 1
+  ]
+  let px sumPx / nP
+  let py sumPy / nP
+  sprout 1 [                                            ; put a node (turtle) on the center of each exit, so that employees and visitors exit trough the center of each exit
+     set breed nodes
+     set Exit? true
+     set ExitName name 
+     set xcor px
+     set ycor py]
+end
+
+to setup-neighbors [id]                                 ; sets the neighbors exit patches with the same id
+  ask neighbors [
+    if exitId = 0 and (roomExit? or buildingExit? or exitSign?) [
+    set exitId id
+    setup-neighbors  id] 
+  ]
+end
+
+to setup-nodes
+  ask nodes [                                            ; setup of the route ndoes
+    set shape "circle"                                   ; default settings
+    set size 1
+    set color gray
+    set hidden? not show-nodes?
+    set nextNodeToExitA NOBODY                           ; node routing info towards exit "A" 
+    set distanceToExitA -1 ; distance not yet computed
+    set nextNodeToExitB NOBODY                           ; node routing info towards exit "B"
+    set distanceToExitB -1 ; distance not yet computed   
+    set nextNodeToExitC NOBODY                           ; node routing info towards exit "C"
+    set distanceToExitC -1 ; distance not yet computed
+    create-links-with other nodes [hide-link]            ; creates links between all nodes
+  ;    set hidden? not show-nodes?]
+  ]
+  remove-links-not-allowed                               ; and removes the ones crossing walls
+end
+
+
+to remove-links-not-allowed  ; links over the walls
+  ask links [
+   if not can-see-each-other? end1 end2  [die]
+  ]
+end
+
+to-report can-see-each-other? [obj-A obj-B] 
+  ; true when objects (turtles) can see each other (no walls in between)
+  ; check needs to be done on both directions since n x dist can hit a wall
+  ; in one of the directions only
+  ; This procedure is used to validate links between nodes and
+  ; to check path/movements of employees/visitors
+  let visible? true
+  let dist 0
+  ask obj-A [                                  ; obj-A facing obj-B
+    set dist distance obj-B                    ; set the distance to the distance of object A to object B
+    face obj-B
+    while [visible? and dist > 0] [            ; inspects patches every 1m... it may pass over patches corners
+      if not [Allowed?] of patch-ahead dist    ; if the patch under inspection has Allowed? false (i.e. is a wall)...
+          [set visible? false]                 ; ... it is not visible
+          set dist dist - 1                    ; lower steps are more acurate but takes longer processing time, so for now the distance is left at 1
+   ]                                           ; patch in the path is a wall
+  ]
+  if visible? = true [                         ; check in the other direction
+    ask obj-B [
+      set dist distance obj-A
+      face obj-A
+      while [visible? and dist > 0] [
+        set dist dist - 1
+        if not [Allowed?] of patch-ahead dist
+            [set visible? false] ]
+    ]
+  ] 
+  report visible?
+end
+
+to reset-patches-colors ; ensures imported colors matches netlog palette
+  ask patches with [pcolor >= 0 and pcolor <= 3 ] [ set pcolor black]
+  ask patches with [pcolor > 3 and pcolor < 9 ] [ set pcolor gray]
+  ask patches with [pcolor >= 9 and pcolor < 10 ] [ set pcolor white]
+  ask patches with [pcolor >= 10 and pcolor < 20 ] [ set pcolor red]
+  ask patches with [pcolor >= 20 and pcolor < 30 ] [ set pcolor orange]
+  ask patches with [pcolor >= 30 and pcolor < 40 and pcolor != 35.6 ] [ set pcolor brown]
+  ask patches with [pcolor >= 40 and pcolor < 50 and pcolor != 44.7 and pcolor != 44.3] [ set pcolor yellow]
+  ask patches with [pcolor >= 50 and pcolor < 60 ] [ set pcolor green]
+  ask patches with [pcolor >= 60 and pcolor < 70 ] [ set pcolor lime]
+  ask patches with [pcolor >= 70 and pcolor < 80 ] [ set pcolor turquoise]
+  ask patches with [pcolor >= 80 and pcolor < 90 ] [ set pcolor cyan]
+  ask patches with [pcolor >= 90 and pcolor < 100 ] [ set pcolor sky]
+  ask patches with [pcolor >= 100 and pcolor < 110 ] [ set pcolor blue]
+  ask patches with [pcolor >= 110 and pcolor < 120 ] [ set pcolor violet]
+  ask patches with [pcolor >= 120 and pcolor < 130 ] [ set pcolor magenta]
+  ask patches with [pcolor >= 130 ] [ set pcolor pink]
+end

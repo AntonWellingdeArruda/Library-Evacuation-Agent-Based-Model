@@ -1,0 +1,153 @@
+;---------------------------
+; builds the escape routes path between each node
+; and the building exists (A, B and C)
+; - shortest path using Dijkstra's algorithm (2^30 defined as infinite)
+; - it show nodes without an exit path!!!!
+;   -> in this case we need to add "exit nodes" in the floor plan
+;
+
+globals [
+  infinite   ; very large number (Dijkstra algorithm) should be larger than the sum of all node/link distances
+]
+
+nodes-own [
+  Exit?           ; node is at one of the exists in the building
+  ExitName        ; on this model: "A" -> main exit, "B" and "C"
+  Visited?        ; used for Dijkstra's algorithm, is visited wanneer je als curNode hebt gebruikt om buren de bekijken
+  ; route info to exit A
+  nextNodeToExitA 
+  distanceToExitA
+  ; route info to exit B
+  nextNodeToExitB
+  distanceToExitB
+  ; route info to exit A
+  nextNodeToExitC
+  distanceToExitC
+  ; data used by agents (employees, visitors) checking this node
+  InView?            ; node is visible by the agent
+  bestExit           ; closest exit from agent
+  DistanceToExit     ; total distance going true this node
+]
+
+
+to set-routes-to-exits
+  ; it applies Dijkstra's short path algorithm 
+  ; start from each building exit
+  ; calculates the shortest path to all the connected nodes in the tree
+  reset-exits
+  ask nodes with [exitName = "A"]  [reset-visits  FindShortestPathsToExit self]               ; call function 'FindShortestPathsToExit' with the parameter 'self' (i.e. the corresponding exit-node A...
+  ask nodes with [exitName = "B"]  [reset-visits  FindShortestPathsToExit self]               ; ... B ...
+  ask nodes with [exitName = "C"]  [reset-visits  FindShortestPathsToExit self]               ; ...or C)
+end
+
+to reset-visits                                                                               ; marks all nodes unvisited as per Dijkstra algorithm (see wiki: https://en.wikipedia.org/wiki/Dijkstra%27s_algorithm)
+  ask nodes [set Visited? false]                                                              ; - algorithm (step 1)
+end
+
+to reset-exits
+  set infinite 2 ^ 30
+  ask nodes [set distanceToExitA infinite set nextNodeToExitA NOBODY                          ; - algortim (step 2) set the distance to the exits for each node to infinite and the next node to the exit as unknown
+             set distanceToExitB infinite set nextNodeToExitB NOBODY
+             set distanceToExitC infinite set nextNodeToExitC NOBODY]
+end
+
+to FindShortestPathsToExit [toNode]
+     let curNode toNode                                                                       ; - algorithm (step 2) set the initial node (A/B/C) as the current node
+     let exit ""                                                                              ;
+     let minDist infinite                                                                     ;
+     ask toNode [                                                                             ; 
+       set exit exitName                                                                      ;
+       if exit = "A" [set nextNodeToExitA self  set distanceToExitA 0]                        ; initial exit node
+       if exit = "B" [set nextNodeToExitB self  set distanceToExitB 0]                        ;
+       if exit = "C" [set nextNodeToExitC self  set distanceToExitC 0]                        ;
+       CheckNeighborsNodes toNode exit                                                        ;  - algorithm (step 3)
+       set Visited? true                                                                      ;    for the first node
+     ]
+     let completed? false
+     while [not completed?] [
+        ifelse count nodes with [not Visited?] > 0 
+        [ if exit = "A" [set curNode  min-one-of nodes with [not Visited?] [distanceToExitA]] ; - algorithm (step 3) pak van de niet visited nodes degene met de laagste distance to exit A
+          if exit = "B" [set curNode  min-one-of nodes with [not Visited?] [distanceToExitB]] ;   update node wit the shortest value
+          if exit = "C" [set curNode  min-one-of nodes with [not Visited?] [distanceToExitC]] ;
+          ask curNode [
+             if exit = "A" [set minDist distanceToExitA]
+             if exit = "B" [set minDist distanceToExitB]
+             if exit = "C" [set minDist distanceToExitC]
+             ifelse minDist = infinite                                         ;(step 5) als er nodes zijn die niet visited zijn, en de lengte naar A infinite is, is hij niet connected to exit A
+             [  set completed? true
+                say (word "node " who " does not have a path to exit " exit) ]                ; nodes without path to exit           
+             [CheckNeighborsNodes curNode exit]                                               ;  - loop algorithm (step 3)
+           ]                                                                                  ;    until completed
+          ]
+        [ set completed?  true] ; all nodes have been visited
+      ]
+
+end
+
+to CheckNeighborsNodes [toNode exit]  ; is called by the current node (curNode = toNode)
+     ask toNode [ 
+       let DistToCurrentNode infinite                           ; is given a default value
+    
+       if exit = "A" [set DistToCurrentNode distanceToExitA]    ; value is overwritten here with the distance of the node to a certain exit
+       if exit = "B" [set DistToCurrentNode distanceToExitB]
+       if exit = "C" [set DistToCurrentNode distanceToExitC]
+       ask my-links [                                           ; asks the links of the current node (only contains the links which are visible i.e. do not cross walls)                
+         ask other-end  [                                       ; ask neigbouring node of curNode
+           if not Visited? [                                    ; if it has not been visited
+             let distanceToNode distance toNode                 ; distance from neighbour node to curNode
+             let totalDist DistToCurrentNode + distanceToNode   ; add the distance between the current node and the other end to the distance of the other end to the exit
+             if exit = "A" [if (distanceToExitA > totalDist)    ; if this distance which was set for this node is larger than the distance calculated in the previous line, set the new distance to the totalDist
+                            [set nextNodeToExitA toNode set distanceToExitA totalDist ] ]
+             if exit = "B" [if (distanceToExitB > totalDist)
+                            [set nextNodeToExitB toNode set distanceToExitB totalDist ]]
+             if exit = "C" [if (distanceToExitC > totalDist)
+                            [set nextNodeToExitC toNode set distanceToExitC totalDist ] ]
+            ]
+          ]
+        ]
+        set Visited? true                                          ; if all neighbours checked, set visited to true (step 4)
+      ]
+end
+
+to show-paths-from [node-nr]                               ; just used to show the paths from a node towards all exists
+  ask nodes with [who = node-nr] [
+    say node-nr
+    show-path self "A"
+    show-path self "B"
+    show-path self "C"
+  ]
+end
+
+to show-path [fNode nameExit]
+     if not Exit? 
+      [ say nameExit 
+      ifelse nameExit = "A" [
+          say (word "node = " fNode " dist A=" distanceToExitA)
+          ask link-with nextNodeToExitA [
+            set color red
+            show-link
+            ask  other-end [show-path self nameExit]
+          ]
+        ]
+        ; esle
+        [ ifelse nameExit = "B" [
+            say (word "node = " fNode " dist B=" distanceToExitB)
+            ask link-with nextNodeToExitB [
+             set color blue
+             show-link
+             ask  other-end [show-path self  nameExit ]
+            ]
+          ]
+          ; else "C" 
+          [ ; ---> exit C
+            say (word "node = " fNode " dist C=" distanceToExitC)
+            ask link-with nextNodeToExitC [
+              set color green
+              show-link
+              ask  other-end [show-path self  nameExit ]
+            ]
+          ]   
+        ]  
+       ]
+end
+

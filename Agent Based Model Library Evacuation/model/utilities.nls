@@ -1,0 +1,33 @@
+;=======================
+; Convenience functions
+;=======================
+
+;Sort a list of lists, on an element of a sublist
+to-report sort-with [ key lst ]
+  report sort-by [ [a b] -> (runresult key a) < (runresult key b) ] lst
+end
+
+
+; Warnings can not be supressed, and are presented in the output window.
+; Useful for things the use must know, such as conditions that should never occur, etc.
+to warning [string]
+  output-print "=================================="
+  output-print word "Warning ! " string
+  output-print "=================================="
+end
+
+; When running in verbose mode, output is generated in the output window, for nonesential information for the user
+; Useful for tracking what the model is doing, can be turned on/off
+to say [string]
+  if verbose? [
+    output-print string
+  ]
+end
+
+;debug is presented in the command output and is used for debug information, prints to the console
+;Messages that are only useful when fixing bugs
+to debug [string]
+  if debug? [
+    print string
+  ]
+end

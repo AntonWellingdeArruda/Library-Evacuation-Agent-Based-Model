@@ -1,0 +1,158 @@
+; ---------------------------------------------
+; Settings for employees and visitors
+;
+
+
+employees-own [
+  Female?
+  escaping?
+  walking-speed  ; m/s wandering on the building
+  running-speed  ; m/s when running to an exit
+  exiting-to     ; building exit to be used
+  bearing-node   ; next evacation node pointer
+  stocking-books? ; employee who is stocking books
+]
+
+visitors-own [
+  Female?
+  escaping?
+  walking-speed  ; m/s wandering on the building
+  running-speed  ; m/s when running to an exit
+  time-to-react  ; time to react to an evacuation
+  Child?         ; currently used for adjusting speed. It should eventually be grouped with parents
+  knows-all-exits?     ; does the visitor knows the evacation routes? if so:
+  knows-exit-A?    ; visitors who only know the main exit A
+  stupid?        ; knows no exits
+  exiting-to     ;   building exit to be used
+  bearing-node   ;   next evacation node pointer
+  book-looker?    ; visitor looking for a book
+  studying?         ; visitor is studying
+  working-together? ; visitor is working together with other visitors
+ ; book-looker-time
+]
+
+
+to place-employees                            
+  create-employees nr-employees               ; create employees
+  [ set Female? false
+    set escaping? false
+    set walking-speed (1 / 1.5)
+    set running-speed 1
+    set exiting-to ""                         ; the building exit which a visitor uses is unknown at the start...
+    set bearing-node ""                       ; ... the same goes for the node which is used as a heading (bearing-node)
+    set shape "person"
+    set color blue
+    set size 4
+    setxy random-xcor random-ycor
+  ]
+  ask employees
+    [
+      while [ Allowed? = false or Inside? = false]    ; employees set on avaiable patches inside the building
+      [setxy random-xcor random-ycor]
+    ]
+  let nr-female nr-employees * employee-female-ratio / 100
+  ask n-of nr-female employees[set Female? true
+                               set walking-speed (0.9 / 1.5)
+                               set running-speed (1.4 / 1.5) ]
+  
+  ask employees [
+    if pcolor = 44.7 [set stocking-books? true]
+    if stocking-books? = true [set walking-speed 0.2]]
+end
+
+to place-visitors
+  
+  create-visitors nr-visitors     ; create visitors
+    [ set Female? false             ; male and females (some acquainted with the exit plan)
+      set escaping? false           ; at the start, no one is escaping
+      set Child? false              ; some children (to be linked with parents) - not yet implemented
+      set knows-all-exits? false    ; initial state is false, is later corrected with the percentile of frequent visitors
+      set stupid? false             ; initial state is false, is later corrected with the percentile of stupid visitors
+      set knows-exit-A? false       ; initial state is false, is later corrected with the percentile of frequent visitors
+      ;set book-looker? false
+      set walking-speed (1.0 / 1.5)
+      set running-speed 1
+      set exiting-to ""             ; the building exit which a visitor uses is unknown at the start...
+      set bearing-node ""           ; ... the same goes for the node which is used as a heading (bearing-node)
+      set shape "person"
+      set color orange
+      set size 4
+      setxy random-xcor random-ycor ; placed randomly inside the building
+    ]
+
+  ask visitors [
+    set time-to-react random 20 ; default time-to-react is 20 ticks
+    
+    ; define the time-to-react for visitors who are looking for books
+    if pcolor = 44.7 [
+      set book-looker? true
+      set walking-speed 0.2
+      set time-to-react 20 + random 15
+    ] 
+    
+    ; define time-to-react visitors studying
+    if pcolor = 44.3 [
+      set studying? true
+      set time-to-react 30 + random 10]
+  
+    ; define time-to-react of visitors working together
+    if pcolor = 35.6 [
+      set working-together? true
+      set time-to-react 20 + random 5]
+   
+  ]
+   ask visitors
+    [
+      while [ Allowed? = false or Inside? = false]          ; visitors set on avaiable patches inside the building
+      [setxy random-xcor random-ycor]
+    ]
+  ; calculates the number of children, adults, frequent visitors, and females
+  let nr-children nr-visitors * visitor-children-ratio / 100
+  let nr-adults nr-visitors - nr-children
+  let nr-frequent-visitors frequent-visitors-ratio * nr-adults / 100
+  let nr-female nr-adults * visitor-female-ratio / 100
+
+  ; calculates the number of visitors that only know exit A or no exits at all
+  let nr-adults-visitors-knowA-or-no-exits nr-adults - nr-frequent-visitors
+  
+  let nr-adults-visitors-knowA nr-adults-visitors-knowA-or-no-exits * visitors-who-only-know-exit-A / 100
+  
+  let nr-adults-visitors-know-no-exits nr-adults-visitors-knowA-or-no-exits - nr-adults-visitors-knowA
+  
+  ; set children visitors -> same sex
+  ask n-of nr-children visitors[
+    set Child? true
+    set stupid? true
+    set shape "face happy"
+    set size 3
+    set walking-speed 0.4
+    set running-speed 0.7]
+
+  ; adults visitors who knows the exist (both sex)
+  ; starting color of adult visitors who know the exits
+  let Adults visitors with [not Child?]
+  ask n-of nr-frequent-visitors Adults [ 
+    set knows-all-exits? true
+    set color red
+  ] 
+ 
+  ; set female properties
+  ask n-of nr-female Adults [ set Female? true
+                                set walking-speed (0.9 / 1.5)
+                                set running-speed (1.4 / 1.5) ] 
+  
+  let newAdults Adults with [knows-all-exits? = false]   ; to make sure we do not transform adults who have previously been set as knowing all exits
+  ask n-of nr-adults-visitors-knowA newAdults [
+    set knows-exit-A? true 
+    set color pink
+  ]
+  
+  ask Adults with [not knows-exit-A? and not knows-all-exits?] [
+    set stupid? true 
+    set color yellow]
+
+;  ask n-of nr-adults-visitors-knowA-or-no-exits Adults [set knows-exit-A? true]
+;  ask Adults with [knows-exit-A?] [
+;    set color pink
+;    set knows-all-exits? false]
+ end
